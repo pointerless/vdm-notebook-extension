@@ -1,0 +1,21 @@
+.vdmHostingLabel {
+  color:darkcyan;
+}
+
+.vdmWebEmbed {
+  align-items:normal;
+  font-family: monospace;
+  font-size: 12px;
+  height:fit-content;
+}
+
+.vdmIframeOutput{
+  position: relative;
+  float: right;
+  width: 100%;
+  overflow: hidden scroll;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 6px;
+  border-color: var(--vscode-notebook-inactiveFocusedCellBorder);
+}
