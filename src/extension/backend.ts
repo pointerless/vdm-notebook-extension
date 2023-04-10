@@ -40,10 +40,13 @@ export class Backend {
             const successRegex = new RegExp(`VDMJ\\sRemote\\sSession\\sStarted:\\s${port}`);
             let resolved = false;
 
+
+            console.log(__dirname);
+
             backend._process = spawn(`java`, 
-            ["-jar", "/home/harry/IdeaProjects/vdmj-remote/target/vdmj-remote-1.0-SNAPSHOT-shaded.jar", 
+            ["-jar", "./vdmj-remote.jar", 
             "-p", `${port}`, "-t", `${backend._sourceType}`, "--sourcePath", `${backend._fileStore.fsPath}`],
-            {});
+            {cwd: __dirname});
 
             backend._process.stdout.on('data', (data) => {
                 console.log(`${cell.document.languageId.toUpperCase()}-backend: ${data}`)

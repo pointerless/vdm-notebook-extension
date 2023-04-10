@@ -41,6 +41,8 @@
     ]
   },
   "scripts": {
+    "vdmj-remote-build": "cd ./vdmj-remote/ && mvn clean install",
+    "vdmj-remote-package": "npm run vdmj-remote-build && cp ./vdmj-remote/target/vdmj-remote-1.0-SNAPSHOT-shaded.jar ./out/extension/vdmj-remote.jar",
     "compile": "npm run compile:extension && npm run compile:client",
     "compile:extension": "tsc -b",
     "compile:client": "webpack --mode production",

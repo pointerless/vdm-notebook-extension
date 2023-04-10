@@ -2,4 +2,4 @@
 
 To run, open in VS Code and hit `F5`
 
-Requires the vdmj-remote package
+vdmj-remote must be built first
