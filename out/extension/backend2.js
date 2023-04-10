@@ -1,44 +1,68 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Backend2 = void 0;
-const subspawn_1 = require("subspawn");
 const node_fetch_1 = require("node-fetch");
 const vscode = require("vscode");
 const util_1 = require("util");
 const crypto_1 = require("crypto");
-const FormData = require('form-data');
+const child_process_1 = require("child_process");
+const tmp = require("tmp");
 class Backend2 {
     constructor() {
         this.address = "";
-        this._processOwner = "";
-        this._storageUri = vscode.Uri.file("");
-        this._files = [];
+        this._fileStore = vscode.Uri.file("");
+        this._fileMap = new Map();
+        this._port = 0;
+        this._sourceType = "";
+        this._healthy = true;
     }
-    async storeSourceText(text, type) {
-        let fileUri = vscode.Uri.file(this._storageUri.fsPath + "/" + crypto_1.randomUUID() + "." + type);
-        await vscode.workspace.fs.writeFile(fileUri, new util_1.TextEncoder().encode(text));
-        return fileUri;
-    }
-    static async startSession(port, sourceType, sourceText, storageUri) {
-        let backend = new Backend2();
-        backend._processOwner = `kernel-${port}`;
-        backend.address = `http://127.0.0.1:${port}`;
-        backend._storageUri = storageUri;
-        let file = await backend.storeSourceText(sourceText, sourceType);
-        console.log(file);
-        backend._files.push(file);
-        subspawn_1.subProcess(backend._processOwner, `java -jar /home/harry/IdeaProjects/vdmj-remote/target/vdmj-remote-1.0-SNAPSHOT-shaded.jar -p ${port} -t ${sourceType} --sourcePath ${file.fsPath}`, true);
-        for (let i = 0; i < 1000; i++) {
-            await node_fetch_1.default(backend.address + "/startup").then(() => { i = 1000; }).catch(() => console.log("Failed " + i));
+    async storeSourceText(cell) {
+        console.log(cell);
+        if (!this._fileMap.has(cell.index)) {
+            this._fileMap.set(cell.index, vscode.Uri.joinPath(this._fileStore, `${(0, crypto_1.randomUUID)()}.${cell.document.languageId}`));
         }
-        return backend;
+        const fileToWrite = this._fileMap.get(cell.index);
+        await vscode.workspace.fs.writeFile(fileToWrite, new util_1.TextEncoder().encode(cell.document.getText()));
     }
-    dispose() {
+    static async startSession(port, cell) {
+        let backend = new Backend2();
+        backend._port = port;
+        backend._sourceType = cell.document.languageId;
+        backend._fileStore = vscode.Uri.file(tmp.dirSync().name);
+        backend.address = `http://127.0.0.1:${port}`;
+        await backend.storeSourceText(cell);
+        return new Promise((resolve, reject) => {
+            const successRegex = new RegExp(`VDMJ\\sRemote\\sSession\\sStarted:\\s${port}`);
+            backend._process = (0, child_process_1.spawn)(`java`, ["-jar", "/home/harry/IdeaProjects/vdmj-remote/target/vdmj-remote-1.0-SNAPSHOT-shaded.jar",
+                "-p", `${port}`, "-t", `${backend._sourceType}`, "--sourcePath", `${backend._fileStore.fsPath}`], {});
+            backend._process.stdout.on('data', (data) => {
+                console.log(`${cell.document.languageId}-backend: ${data}`);
+                if (successRegex.test(data)) {
+                    resolve(backend);
+                }
+            });
+            backend._process.stderr.on('data', (data) => {
+                console.error(`${cell.document.languageId}-backend: ${data}`);
+                backend._healthy = false;
+            });
+            backend._process.on('close', (close) => {
+                console.debug(`${cell.document.languageId}-backend: ${close}`);
+                backend._healthy = false;
+            });
+            return backend;
+        });
+    }
+    async addContent(cell) {
+        await this.storeSourceText(cell);
+        await (0, node_fetch_1.default)(this.address + "/reload", { method: "POST" }).then(response => { console.log(response); });
+    }
+    async dispose() {
+        var _a;
         try {
-            subspawn_1.killSubProcesses(this._processOwner);
-            for (let file of this._files) {
-                vscode.workspace.fs.delete(file);
-            }
+            // TODO: More graceful method of killing child process
+            await (0, node_fetch_1.default)(this.address + "/stopMain", { method: "POST" });
+            (_a = this._process) === null || _a === void 0 ? void 0 : _a.kill('SIGKILL');
+            vscode.workspace.fs.delete(this._fileStore);
         }
         catch (e) {
             console.error(e);

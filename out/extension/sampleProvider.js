@@ -3,12 +3,22 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SampleKernel = exports.SampleContentSerializer = void 0;
 const vscode = require("vscode");
 const util_1 = require("util");
+const backend_1 = require("./backend");
 const custom_output_1 = require("./custom-output");
-const backend2_1 = require("./backend2");
+const net_1 = require("net");
+async function getFreePort() {
+    return new Promise(res => {
+        const srv = (0, net_1.createServer)();
+        srv.listen(0, () => {
+            const port = srv.address().port;
+            srv.close((err) => res(port));
+        });
+    });
+}
 const FormData = require('form-data');
 class SampleContentSerializer {
     constructor() {
-        this.label = 'My Sample Content Serializer';
+        this.label = 'VDM Notebook Content Serializer';
     }
     async deserializeNotebook(data, token) {
         var contents = new util_1.TextDecoder().decode(data); // convert to String to make JSON object
@@ -49,6 +59,8 @@ class SampleKernel {
         //private vdmCellSessions = new Map<number, SessionInfo>();
         //private _restAPI: Backend;
         this.cellBackends = new Map();
+        this.vdmrtBackend = null;
+        this.vdmppBackend = null;
         this.storageUri = storageUri;
         //this._restAPI = new Backend();
         this._controller = vscode.notebooks.createNotebookController(this.id, 'vdm-notebook-renderer', this.label);
@@ -61,9 +73,9 @@ class SampleKernel {
         this._controller.dispose();
         //this._restAPI.dispose();
     }
-    _executeAll(cells, _notebook, _controller) {
+    async _executeAll(cells, _notebook, _controller) {
         for (let cell of cells) {
-            this._doExecution(cell);
+            await this._doExecution(cell);
         }
     }
     async _doExecution(cell) {
@@ -81,7 +93,7 @@ class SampleKernel {
             });
         }
         else if (cell.document.languageId === "vdmsl") {
-            this._execVDMSL(execution, cell)
+            await this._execVDMSL(execution, cell)
                 .then(() => {
                 execution.end(true, Date.now());
             })
@@ -138,26 +150,29 @@ class SampleKernel {
               throw Error(reason);
             });
         }*/
-        var _a;
-        if (this.cellBackends.has(cell.index)) {
-            (_a = this.cellBackends.get(cell.index)) === null || _a === void 0 ? void 0 : _a.dispose();
-            this.cellBackends.set(cell.index, await backend2_1.Backend2.startSession(8080, "vdmsl", cell.document.getText(), this.storageUri));
-            this._renderVDMSession(execution, cell);
+        if (this.vdmslBackend == undefined) {
+            this.vdmslBackend = await backend_1.Backend.startSession(await getFreePort(), cell);
         }
         else {
-            this.cellBackends.set(cell.index, await backend2_1.Backend2.startSession(8080, "vdmsl", cell.document.getText(), this.storageUri));
-            this._renderVDMSession(execution, cell);
+            await this.vdmslBackend.addContent(cell);
         }
+        this._renderVDMSession(execution, this.vdmslBackend.address);
+        /*if(this.cellBackends.has(cell.index)){
+          this.cellBackends.get(cell.index)?.dispose();
+          this.cellBackends.set(cell.index, await Backend2.startSession(8080, "vdmsl", cell.document.getText()));
+          this._renderVDMSession(execution, cell);
+        }else{
+          this.cellBackends.set(cell.index, await Backend2.startSession(8080, "vdmsl", cell.document.getText()));
+          this._renderVDMSession(execution, cell);
+        }*/
     }
     async _execHTML(execution, cell) {
         execution.replaceOutput([new vscode.NotebookCellOutput([
                 vscode.NotebookCellOutputItem.text(`${cell.document.getText()}`, "text/html")
             ])]);
     }
-    async _renderVDMSession(execution, cell) {
-        var _a, _b;
-        console.log("Got: " + ((_a = this.cellBackends.get(cell.index)) === null || _a === void 0 ? void 0 : _a.address));
-        execution.replaceOutput(custom_output_1.VDMOutput.fromAddress((_b = this.cellBackends.get(cell.index)) === null || _b === void 0 ? void 0 : _b.address));
+    async _renderVDMSession(execution, address) {
+        execution.replaceOutput(custom_output_1.VDMOutput.fromAddress(address));
         //execution.replaceOutput(VDMOutput.fromSessionOutputs(this.vdmCellSessions.get(cell.index)?.sessionOutputs));
     }
 }

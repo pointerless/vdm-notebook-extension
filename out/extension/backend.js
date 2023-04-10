@@ -1,53 +1,68 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Backend = void 0;
-const subspawn_1 = require("subspawn");
 const node_fetch_1 = require("node-fetch");
-const FormData = require('form-data');
+const vscode = require("vscode");
+const util_1 = require("util");
+const crypto_1 = require("crypto");
+const child_process_1 = require("child_process");
+const tmp = require("tmp");
 class Backend {
-    constructor(restAPIURL = "http://127.0.0.1:8080") {
-        this.restAPIURL = restAPIURL;
-        subspawn_1.subProcess("kernel", "java -jar /home/harry/IdeaProjects/vdmj-rest-api/target/vdmj-rest-api-1.0-SNAPSHOT-shaded.jar", true);
+    constructor() {
+        this.address = "";
+        this._fileStore = vscode.Uri.file("");
+        this._fileMap = new Map();
+        this._port = 0;
+        this._sourceType = "";
+        this._healthy = true;
     }
-    async startSession(scriptText, filename = "source") {
-        const formData = new FormData();
-        const blob = Buffer.from(scriptText);
-        formData.append('file', blob, filename);
-        return new Promise((resolve, reject) => {
-            const req = new node_fetch_1.Request(`${this.restAPIURL}/startSession/VDMSL`);
-            const init = {
-                method: "POST",
-                body: formData
-            };
-            node_fetch_1.default(req, init).then(response => {
-                response.json()
-                    .then(sessionInfo => {
-                    resolve(sessionInfo);
-                }).catch(reason => reject(reason));
-            }).catch(reason => reject(reason));
-        });
-    }
-    async endSession(sessionId) {
-        if (typeof sessionId === undefined) {
-            throw new Error("Cannot end session with undefined id");
+    async storeSourceText(cell) {
+        console.log(cell);
+        if (!this._fileMap.has(cell.index)) {
+            this._fileMap.set(cell.index, vscode.Uri.joinPath(this._fileStore, `${(0, crypto_1.randomUUID)()}.${cell.document.languageId}`));
         }
+        const fileToWrite = this._fileMap.get(cell.index);
+        await vscode.workspace.fs.writeFile(fileToWrite, new util_1.TextEncoder().encode(cell.document.getText()));
+    }
+    static async startSession(port, cell) {
+        let backend = new Backend();
+        backend._port = port;
+        backend._sourceType = cell.document.languageId;
+        backend._fileStore = vscode.Uri.file(tmp.dirSync().name);
+        backend.address = `http://127.0.0.1:${port}`;
+        await backend.storeSourceText(cell);
         return new Promise((resolve, reject) => {
-            const req = new node_fetch_1.Request(`${this.restAPIURL}/${sessionId}/endSession`);
-            const init = {
-                method: "POST"
-            };
-            node_fetch_1.default(req, init)
-                .then(response => {
-                response.text()
-                    .then(outcome => {
-                    resolve(outcome);
-                }).catch(reason => reject(reason));
-            }).catch(reason => reject(reason));
+            const successRegex = new RegExp(`VDMJ\\sRemote\\sSession\\sStarted:\\s${port}`);
+            backend._process = (0, child_process_1.spawn)(`java`, ["-jar", "/home/harry/IdeaProjects/vdmj-remote/target/vdmj-remote-1.0-SNAPSHOT-shaded.jar",
+                "-p", `${port}`, "-t", `${backend._sourceType}`, "--sourcePath", `${backend._fileStore.fsPath}`], {});
+            backend._process.stdout.on('data', (data) => {
+                console.log(`${cell.document.languageId}-backend: ${data}`);
+                if (successRegex.test(data)) {
+                    resolve(backend);
+                }
+            });
+            backend._process.stderr.on('data', (data) => {
+                console.error(`${cell.document.languageId}-backend: ${data}`);
+                backend._healthy = false;
+            });
+            backend._process.on('close', (close) => {
+                console.debug(`${cell.document.languageId}-backend: ${close}`);
+                backend._healthy = false;
+            });
+            return backend;
         });
     }
-    dispose() {
+    async addContent(cell) {
+        await this.storeSourceText(cell);
+        await (0, node_fetch_1.default)(this.address + "/reload", { method: "POST" }).then(response => { console.log(response); });
+    }
+    async dispose() {
+        var _a;
         try {
-            subspawn_1.killSubProcesses("kernel");
+            // TODO: More graceful method of killing child process
+            await (0, node_fetch_1.default)(this.address + "/stopMain", { method: "POST" });
+            (_a = this._process) === null || _a === void 0 ? void 0 : _a.kill('SIGKILL');
+            vscode.workspace.fs.delete(this._fileStore);
         }
         catch (e) {
             console.error(e);
@@ -55,5 +70,4 @@ class Backend {
     }
 }
 exports.Backend = Backend;
-;
 //# sourceMappingURL=backend.js.map

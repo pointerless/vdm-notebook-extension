@@ -1,6 +1,4 @@
 import * as vscode from 'vscode';
-import { SessionOutput } from './backend';
-import { randomUUID } from "crypto";
 
 export class VDMOutputItem extends vscode.NotebookCellOutputItem {
 

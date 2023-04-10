@@ -1,77 +1,83 @@
-import { subProcess, killSubProcesses } from 'subspawn';
-import fetch, { Request } from "node-fetch";
+import fetch from "node-fetch";
+import * as vscode from "vscode";
+import { TextEncoder } from 'util';
+import { randomUUID } from 'crypto';
+import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 
-const FormData = require('form-data');
-
-export type SessionOutput = {
-    type: string,
-    module: string,
-    accessURL: string,
-    displayName: string,
-};
-  
-export type SessionInfo = {
-    id: string,
-    sessionOutputs: SessionOutput[],
-    sourceType: string,
-    sessionDir: string
-};
+const tmp = require("tmp");
 
 export class Backend {
 
-    restAPIURL: string;
+    address: string = "";
+    _process: ChildProcessWithoutNullStreams | undefined;
+    _fileStore: vscode.Uri = vscode.Uri.file("");
+    _fileMap: Map<number, vscode.Uri> = new Map();
+    _port: number = 0;
+    _sourceType: string = "";
+    _healthy: boolean = true;
 
-    constructor(restAPIURL="http://127.0.0.1:8080"){
-        this.restAPIURL = restAPIURL;
-        subProcess("kernel", "java -jar /home/harry/IdeaProjects/vdmj-rest-api/target/vdmj-rest-api-1.0-SNAPSHOT-shaded.jar", true);
-    }
-
-    async startSession(scriptText: string, filename="source"){
-        const formData = new FormData();
-        const blob = Buffer.from(scriptText);
-        formData.append('file', blob, filename);
-        return new Promise<SessionInfo>((resolve, reject) => {
-            const req = new Request(`${this.restAPIURL}/startSession/VDMSL`);
-            const init = {
-                method: "POST",
-                body: formData
-            };
-            fetch(req, init).then(response => {
-                response.json()
-                .then(sessionInfo => {
-                    resolve(sessionInfo as SessionInfo);
-                }).catch(reason => reject(reason));
-            }).catch(reason => reject(reason));
-        });
-    }
-
-    async endSession(sessionId: string | undefined){
-        if(typeof sessionId === undefined){
-            throw new Error("Cannot end session with undefined id");
+    private async storeSourceText(cell: vscode.NotebookCell){
+        console.log(cell);
+        if(!this._fileMap.has(cell.index)){
+            this._fileMap.set(cell.index, vscode.Uri.joinPath(this._fileStore, `${randomUUID()}.${cell.document.languageId}`));
         }
-        
-        return new Promise<string>((resolve, reject) => {
-            const req = new Request(`${this.restAPIURL}/${sessionId}/endSession`);
-            const init = {
-              method: "POST"
-            };
-            fetch(req, init)
-            .then(response => {
-                response.text()
-                .then(outcome => {
-                    resolve(outcome);
-                }).catch(reason => reject(reason));
-            }).catch(reason => reject(reason));
-        });
+        const fileToWrite = this._fileMap.get(cell.index) as vscode.Uri;
+        await vscode.workspace.fs.writeFile(fileToWrite, new TextEncoder().encode(cell.document.getText()));
     }
 
-    dispose(){
+    static async startSession(port: number, cell: vscode.NotebookCell) : Promise<Backend>{
+        let backend = new Backend();
+        backend._port = port;
+        backend._sourceType = cell.document.languageId;
+        backend._fileStore = vscode.Uri.file(tmp.dirSync().name);
+
+        backend.address = `http://127.0.0.1:${port}`;
+        await backend.storeSourceText(cell);
+
+        return new Promise<Backend>((resolve, reject) => {
+
+            const successRegex = new RegExp(`VDMJ\\sRemote\\sSession\\sStarted:\\s${port}`);
+
+            backend._process = spawn(`java`, 
+            ["-jar", "/home/harry/IdeaProjects/vdmj-remote/target/vdmj-remote-1.0-SNAPSHOT-shaded.jar", 
+            "-p", `${port}`, "-t", `${backend._sourceType}`, "--sourcePath", `${backend._fileStore.fsPath}`],
+            {});
+
+            backend._process.stdout.on('data', (data) => {
+                console.log(`${cell.document.languageId}-backend: ${data}`)
+                if(successRegex.test(data)){
+                    resolve(backend);
+                }
+            })
+
+            backend._process.stderr.on('data', (data) => {
+                console.error(`${cell.document.languageId}-backend: ${data}`)
+                backend._healthy = false;
+            })
+
+            backend._process.on('close', (close) => {
+                console.debug(`${cell.document.languageId}-backend: ${close}`)
+                backend._healthy = false;
+            })
+
+            return backend;
+        })
+    }
+
+    public async addContent(cell: vscode.NotebookCell){
+        await this.storeSourceText(cell);
+        await fetch(this.address+"/reload", {method: "POST"}).then(response => { console.log(response) });
+    }
+
+    async dispose() {
         try{
-            killSubProcesses("kernel");
+            // TODO: More graceful method of killing child process
+            await fetch(this.address+"/stopMain", {method: "POST"});
+            this._process?.kill('SIGKILL');
+            vscode.workspace.fs.delete(this._fileStore);
         }catch(e){
             console.error(e);
         }
     }
 
-
-};
+}
