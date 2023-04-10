@@ -71,10 +71,12 @@ export class Backend {
 
     async dispose() {
         try{
-            // TODO: More graceful method of killing child process
-            await fetch(this.address+"/stopMain", {method: "POST"});
-            this._process?.kill('SIGKILL');
-            vscode.workspace.fs.delete(this._fileStore);
+            if(this._process !== undefined){
+                console.log("Killing backend");
+                (this._process as ChildProcessWithoutNullStreams).kill('SIGKILL');
+                process.kill((this._process as ChildProcessWithoutNullStreams).pid);
+                vscode.workspace.fs.delete(this._fileStore);
+            }
         }catch(e){
             console.error(e);
         }

@@ -101,8 +101,8 @@ export class SampleKernel {
   private cellBackends = new Map<number, Backend>();
 
   private vdmslBackend: Backend | undefined;
-  private vdmrtBackend = null;
-  private vdmppBackend = null;
+  private vdmrtBackend: Backend | undefined;
+  private vdmppBackend: Backend | undefined;
 
   private storageUri: vscode.Uri;
 
@@ -120,9 +120,17 @@ export class SampleKernel {
   }
 
   dispose(): void {
-    console.log("Disposing");
+    console.log("Disposing Kernel");
     this._controller.dispose();
-    //this._restAPI.dispose();
+    if(this.vdmslBackend !== undefined){
+      (this.vdmslBackend as Backend).dispose();
+    }
+    if(this.vdmrtBackend !== undefined){
+      (this.vdmrtBackend as Backend).dispose();
+    }
+    if(this.vdmppBackend !== undefined){
+      (this.vdmppBackend as Backend).dispose();
+    }
   }
 
   private async _executeAll(cells: vscode.NotebookCell[], _notebook: vscode.NotebookDocument, _controller: vscode.NotebookController): Promise<void> {

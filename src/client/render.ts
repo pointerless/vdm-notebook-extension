@@ -17,7 +17,6 @@ function getResizeEventListener(frameID: string): EventListenerOrEventListenerOb
 		if (thisFrame === null) {
 			console.log(`NULLED: ${frameID}`);
 		} else if (thisFrame.contentWindow === e.source) {
-			console.log("Got resize: "+e.data.height);
 			thisFrame.height = e.data.height + "px";
 			thisFrame.style.height = e.data.height + "px";
 		}
