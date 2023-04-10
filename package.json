@@ -75,8 +75,8 @@
     "webpack-cli": "^4.7.0"
   },
   "dependencies": {
+    "@types/tmp": "^0.2.3",
     "bootstrap": "^5.2.3",
-    "form-data": "^4.0.0",
     "node-buffer": "^1.0.3",
     "node-fetch": "^2.6.9",
     "subspawn": "^1.0.1",

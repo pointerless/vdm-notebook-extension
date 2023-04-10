@@ -2,9 +2,10 @@ import fetch from "node-fetch";
 import * as vscode from "vscode";
 import { TextEncoder } from 'util';
 import { randomUUID } from 'crypto';
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { ChildProcessWithoutNullStreams, spawn, spawnSync } from 'child_process';
+import * as tmp from "tmp";
 
-const tmp = require("tmp");
+tmp.setGracefulCleanup();
 
 export class Backend {
 
@@ -37,6 +38,7 @@ export class Backend {
         return new Promise<Backend>((resolve, reject) => {
 
             const successRegex = new RegExp(`VDMJ\\sRemote\\sSession\\sStarted:\\s${port}`);
+            let resolved = false;
 
             backend._process = spawn(`java`, 
             ["-jar", "/home/harry/IdeaProjects/vdmj-remote/target/vdmj-remote-1.0-SNAPSHOT-shaded.jar", 
@@ -44,20 +46,34 @@ export class Backend {
             {});
 
             backend._process.stdout.on('data', (data) => {
-                console.log(`${cell.document.languageId}-backend: ${data}`)
-                if(successRegex.test(data)){
+                console.log(`${cell.document.languageId.toUpperCase()}-backend: ${data}`)
+                if(successRegex.test(data) && !resolved){
                     resolve(backend);
+                    resolved = true;
+                    vscode.window.showInformationMessage(`${cell.document.languageId.toUpperCase()} backend started successfully`);
                 }
             })
 
             backend._process.stderr.on('data', (data) => {
-                console.error(`${cell.document.languageId}-backend: ${data}`)
+                console.error(`${cell.document.languageId.toUpperCase()}-backend: ${data}`)
                 backend._healthy = false;
+                if(!resolved){
+                    reject(data);
+                    resolved = true;
+                }else{
+                    vscode.window.showErrorMessage(`${cell.document.languageId.toUpperCase()} backend gave error message: ${data}`)
+                }
             })
 
             backend._process.on('close', (close) => {
-                console.debug(`${cell.document.languageId}-backend: ${close}`)
+                console.debug(`${cell.document.languageId.toUpperCase()}-backend: ${close}`)
                 backend._healthy = false;
+                if(!resolved){
+                    reject(`${cell.document.languageId.toUpperCase()} backend process exited with code ${close}`);
+                    resolved = true;
+                }else{
+                    vscode.window.showErrorMessage(`${cell.document.languageId.toUpperCase()} backend process exited unexpectedly with code ${close}`);
+                }
             })
 
             return backend;
@@ -73,12 +89,27 @@ export class Backend {
         try{
             if(this._process !== undefined){
                 console.log("Killing backend");
-                (this._process as ChildProcessWithoutNullStreams).kill('SIGKILL');
-                process.kill((this._process as ChildProcessWithoutNullStreams).pid);
-                vscode.workspace.fs.delete(this._fileStore);
+                (this._process as ChildProcessWithoutNullStreams).kill();
+
+                // May need to add the following for Windows compatability
+                //process.kill((this._process as ChildProcessWithoutNullStreams).pid);
+
+
+                // Unfortunately this is the only way I can find to currently delete created
+                // tmp files cross platform...
+                if(process.platform == 'win32'){
+                    spawnSync("rmdir", ["/Q", "/S", this._fileStore.path]);
+                }else{
+                    spawnSync("rm", ["-rf", this._fileStore.path]);
+                }
+
+                // I would prefer to use this but for some reason the nodeJS delete 
+                // system silently fails whereas this throws an unidentifiable error
+                //await vscode.workspace.fs.delete(this._fileStore, {recursive: true});
+                
             }
         }catch(e){
-            console.error(e);
+            console.error("Error in disposing Backend: "+e);
         }
     }
 

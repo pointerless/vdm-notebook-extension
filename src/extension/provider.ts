@@ -1,10 +1,7 @@
 import * as vscode from 'vscode';
 import { TextDecoder, TextEncoder } from "util";
-import fetch, { Request } from "node-fetch";
-import { subProcess, killSubProcesses } from 'subspawn';
 import { Backend } from './backend';
 
-import { randomUUID } from "crypto";
 import { VDMOutput, VDMOutputItem } from './custom-output';
 
 import {createServer, AddressInfo} from "net";
@@ -18,8 +15,6 @@ async function getFreePort() {
         });
     })
 }
-
-const FormData = require('form-data');
 
 //TODO: 
 // * Some system to allow specification of static web content to host
@@ -43,7 +38,7 @@ interface RawNotebookCell {
   editable?: boolean;
 }
 
-export class SampleContentSerializer implements vscode.NotebookSerializer {
+export class VDMContentSerializer implements vscode.NotebookSerializer {
   public readonly label: string = 'VDM Notebook Content Serializer';
 
   public async deserializeNotebook(data: Uint8Array, token: vscode.CancellationToken): Promise<vscode.NotebookData> {
@@ -87,28 +82,20 @@ export class SampleContentSerializer implements vscode.NotebookSerializer {
   }
 }
 
-export class SampleKernel {
+export class VDMKernel {
   readonly id = 'vdm-notebook-renderer-kernel';
   public readonly label = 'VDM Notebook Kernel';
-  readonly supportedLanguages = ['json', 'vdmsl', 'javascript', 'html']; //, 'vdmpp', 'vdmrt', 'vdm-cli', 'vdm-gui'];
+  readonly supportedLanguages = ['vdmsl','vdmpp', 'vdmrt', 'javascript', 'html', 'python']; //, 'vdm-cli', 'vdm-gui'];
 
   private _executionOrder = 0;
   private readonly _controller: vscode.NotebookController;
-
-  //private vdmCellSessions = new Map<number, SessionInfo>();
-  //private _restAPI: Backend;
-
-  private cellBackends = new Map<number, Backend>();
 
   private vdmslBackend: Backend | undefined;
   private vdmrtBackend: Backend | undefined;
   private vdmppBackend: Backend | undefined;
 
-  private storageUri: vscode.Uri;
 
-  constructor(storageUri: vscode.Uri) {
-    this.storageUri = storageUri;
-    //this._restAPI = new Backend();
+  constructor() {
 
     this._controller = vscode.notebooks.createNotebookController(this.id,
       'vdm-notebook-renderer',
@@ -121,7 +108,6 @@ export class SampleKernel {
 
   dispose(): void {
     console.log("Disposing Kernel");
-    this._controller.dispose();
     if(this.vdmslBackend !== undefined){
       (this.vdmslBackend as Backend).dispose();
     }
@@ -131,6 +117,7 @@ export class SampleKernel {
     if(this.vdmppBackend !== undefined){
       (this.vdmppBackend as Backend).dispose();
     }
+    this._controller.dispose();
   }
 
   private async _executeAll(cells: vscode.NotebookCell[], _notebook: vscode.NotebookDocument, _controller: vscode.NotebookController): Promise<void> {
@@ -145,22 +132,14 @@ export class SampleKernel {
     execution.executionOrder = ++this._executionOrder;
     execution.start(Date.now());
 
-    if (cell.document.languageId === "json") {
-      this._execJson(execution, cell)
-        .then(() => {
-          execution.end(true, Date.now());
-        })
-        .catch((err) => {
-          execution.end(false, Date.now());
-          console.error(err);
-        });
-    } else if (cell.document.languageId === "vdmsl") {
+    if (cell.document.languageId === "vdmsl") {
       await this._execVDMSL(execution, cell)
         .then(() => {
           execution.end(true, Date.now());
         })
         .catch((err) => {
           execution.end(false, Date.now());
+          vscode.window.showErrorMessage(err);
           console.error(err);
         });
     } else if (cell.document.languageId === "html"){
@@ -175,64 +154,18 @@ export class SampleKernel {
     }
   }
 
-  private async _execJson(execution: vscode.NotebookCellExecution, cell: vscode.NotebookCell): Promise<void> {
-    try {
-      execution.replaceOutput([new vscode.NotebookCellOutput([
-        vscode.NotebookCellOutputItem.json(JSON.parse(cell.document.getText()), "x-application/sample-json-renderer"),
-        vscode.NotebookCellOutputItem.json(JSON.parse(cell.document.getText()))
-      ])]);
-
-      execution.end(true, Date.now());
-    } catch (err: any) {
-      execution.replaceOutput([new vscode.NotebookCellOutput([
-        vscode.NotebookCellOutputItem.error(err)
-      ])]);
-    }
-  }
-
-
   private async _execVDMSL(execution: vscode.NotebookCellExecution, cell: vscode.NotebookCell): Promise<void> {
-    /*if (this.vdmCellSessions.has(cell.index)) {
-      await this._restAPI.endSession(this.vdmCellSessions.get(cell.index)?.id)
-        .then(async () => {
-          await this._restAPI.startSession(cell.document.getText())
-            .then(async sessionInfo => {
-              this.vdmCellSessions.set(cell.index, sessionInfo as SessionInfo);
-              this._renderVDMSession(execution, cell);
-            }).catch(reason => {
-              throw Error(reason);
-            });
-        }).catch(reason => {
-          throw Error(reason);
-        });
-    } else {
-      await this._restAPI.startSession(cell.document.getText())
-        .then(async sessionInfo => {
-          this.vdmCellSessions.set(cell.index, sessionInfo as SessionInfo);
-          this._renderVDMSession(execution, cell);
-        }).catch(reason => {
-          throw Error(reason);
-        });
-    }*/
-
-    
-    
     if(this.vdmslBackend == undefined){
-      this.vdmslBackend = await Backend.startSession(await getFreePort(), cell);
+      try{
+        this.vdmslBackend = await Backend.startSession(await getFreePort(), cell);
+      }catch(e) {
+        throw "Could not start vdmsl backend: "+e;
+      }
     }else{
       await this.vdmslBackend.addContent(cell);
     }
 
     this._renderVDMSession(execution, this.vdmslBackend.address);
-
-    /*if(this.cellBackends.has(cell.index)){
-      this.cellBackends.get(cell.index)?.dispose();
-      this.cellBackends.set(cell.index, await Backend2.startSession(8080, "vdmsl", cell.document.getText()));
-      this._renderVDMSession(execution, cell);
-    }else{
-      this.cellBackends.set(cell.index, await Backend2.startSession(8080, "vdmsl", cell.document.getText()));
-      this._renderVDMSession(execution, cell);
-    }*/
   }
 
   private async _execHTML(execution: vscode.NotebookCellExecution, cell: vscode.NotebookCell) {
@@ -243,7 +176,6 @@ export class SampleKernel {
 
   private async _renderVDMSession(execution: vscode.NotebookCellExecution,address: string) {
     execution.replaceOutput(VDMOutput.fromAddress(address));
-    //execution.replaceOutput(VDMOutput.fromSessionOutputs(this.vdmCellSessions.get(cell.index)?.sessionOutputs));
   }
 
 }
