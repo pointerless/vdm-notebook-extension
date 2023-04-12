@@ -54,6 +54,9 @@ export function render({ container, mime, value }: IRenderInfo) {
 	iframe.src = value.address;
 	iframe.title = value.address;
 
+	let hostPutScript = document.createElement("script");
+	hostPutScript.innerText = `var vdmHost="${value.address}"`;
+
 	/*let iframe = `<iframe id="${frameID}" scrolling="no" 
 				style="position: relative; float: right; width: 100%;" sandbox="allow-same-origin allow-scripts" 
 				allow="cross-origin-isolated" src="${value.accessURL}" title="${value.displayName}">
@@ -65,6 +68,7 @@ export function render({ container, mime, value }: IRenderInfo) {
 	iframeContainer.appendChild(iframe);
 	container.appendChild(title);
 	container.appendChild(iframeContainer);
+	container.appendChild(hostPutScript);
 
 	window.addEventListener("message", getResizeEventListener(frameID));
 }
