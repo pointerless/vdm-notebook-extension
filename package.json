@@ -1,7 +1,7 @@
 {
-  "name": "notebook-serializer-example",
-  "displayName": "notebook-serializer-example",
-  "description": "Notebook using Serializer API example",
+  "name": "vdm-notebook-extension",
+  "displayName": "VDM Notebook",
+  "description": "Notebook using VDMJ-Remote as a kernel",
   "version": "0.0.1",
   "extensionKind": [
     "ui"
