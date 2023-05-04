@@ -2,9 +2,10 @@ import * as vscode from 'vscode';
 import { TextDecoder, TextEncoder } from "util";
 import { Backend } from './backend';
 
-import { VDMOutput, VDMOutputItem } from './custom-output';
+import { VDMOutput } from './custom-output';
 
 import {createServer, AddressInfo} from "net";
+import { randomUUID } from 'crypto';
 
 async function getFreePort() {
     return new Promise<number>( res => {
@@ -22,10 +23,6 @@ async function getFreePort() {
 //   only method of execution (annotations)
 // * Some system to allow python/js in the notebook to call data/functions on the backend.
 
-/**
- * An ultra-minimal sample provider that lets the user type in JSON, and then
- * outputs JSON cells. The outputs are transient and not saved to notebook file on disk.
- */
 
 interface RawNotebookData {
   cells: RawNotebookCell[]
@@ -36,6 +33,12 @@ interface RawNotebookCell {
   value: string;
   kind: vscode.NotebookCellKind;
   editable?: boolean;
+}
+
+type BackendSet = {
+  vdmsl: Backend | undefined,
+  vdmrt: Backend | undefined,
+  vdmpp: Backend | undefined
 }
 
 export class VDMContentSerializer implements vscode.NotebookSerializer {
@@ -53,11 +56,17 @@ export class VDMContentSerializer implements vscode.NotebookSerializer {
     }
 
     // Create array of Notebook cells for the VS Code API from file contents
-    const cells = raw.cells.map(item => new vscode.NotebookCellData(
-      item.kind,
-      item.value,
-      item.language
-    ));
+    const cells = raw.cells.map(item => {
+      let data = new vscode.NotebookCellData(
+        item.kind,
+        item.value,
+        item.language
+      )
+      if(data.metadata === undefined){
+        data.metadata = {vdmKernelId: randomUUID()}
+      }
+      return data;
+    });
 
     // Pass read and formatted Notebook Data to VS Code to display Notebook with saved cells
     return new vscode.NotebookData(
@@ -85,15 +94,11 @@ export class VDMContentSerializer implements vscode.NotebookSerializer {
 export class VDMKernel {
   readonly id = 'vdm-notebook-renderer-kernel';
   public readonly label = 'VDM Notebook Kernel';
-  readonly supportedLanguages = ['vdmsl','vdmpp', 'vdmrt', 'javascript', 'html', 'python']; //, 'vdm-cli', 'vdm-gui'];
+  readonly supportedLanguages = ['vdmsl','vdmpp', 'vdmrt', 'html'] //'javascript' ??;
 
   private _executionOrder = 0;
   private readonly _controller: vscode.NotebookController;
-
-  private vdmslBackend: Backend | undefined;
-  private vdmrtBackend: Backend | undefined;
-  private vdmppBackend: Backend | undefined;
-
+  private notebookMap: Map<vscode.NotebookDocument, BackendSet> = new Map();
 
   constructor() {
 
@@ -108,33 +113,67 @@ export class VDMKernel {
 
   dispose(): void {
     console.log("Disposing Kernel");
-    if(this.vdmslBackend !== undefined){
-      (this.vdmslBackend as Backend).dispose();
-    }
-    if(this.vdmrtBackend !== undefined){
-      (this.vdmrtBackend as Backend).dispose();
-    }
-    if(this.vdmppBackend !== undefined){
-      (this.vdmppBackend as Backend).dispose();
-    }
+
+    this.notebookMap.forEach((value, key) => {
+      if(value.vdmsl !== undefined){
+        (value.vdmsl as Backend).dispose();
+      }
+      if(value.vdmrt !== undefined){
+        (value.vdmrt as Backend).dispose();
+      }
+      if(value.vdmpp !== undefined){
+        (value.vdmpp as Backend).dispose();
+      }
+    })
     this._controller.dispose();
   }
 
   private async _executeAll(cells: vscode.NotebookCell[], _notebook: vscode.NotebookDocument, _controller: vscode.NotebookController): Promise<void> {
     for (let cell of cells) {
-      await this._doExecution(cell);
+      console.log(_notebook.uri);
+      let backendSet: BackendSet;
+      if(!this.notebookMap.has(_notebook)){
+        backendSet = {vdmsl: undefined, vdmrt: undefined, vdmpp: undefined}
+        this.notebookMap.set(_notebook, backendSet);
+      }else{
+        backendSet = this.notebookMap.get(_notebook) as BackendSet;
+      }
+      await this._doExecution(cell, backendSet);
     }
   }
 
-  private async _doExecution(cell: vscode.NotebookCell): Promise<void> {
+  private async _doExecution(cell: vscode.NotebookCell, backendSet: BackendSet): Promise<void> {
     const execution = this._controller.createNotebookCellExecution(cell);
 
     execution.executionOrder = ++this._executionOrder;
     execution.start(Date.now());
 
     if (cell.document.languageId === "vdmsl") {
-      await this._execVDMSL(execution, cell)
-        .then(() => {
+      await this._execVDM(execution, cell, backendSet.vdmsl)
+        .then((vdmslBackend: Backend) => {
+          backendSet.vdmsl = vdmslBackend;
+          execution.end(true, Date.now());
+        })
+        .catch((err) => {
+          execution.end(false, Date.now());
+          vscode.window.showErrorMessage(err);
+          console.error(err);
+        });
+    } else if (cell.document.languageId === "vdmrt") {
+      await this._execVDM(execution, cell, backendSet.vdmrt)
+        .then((vdmrtBackend: Backend) => {
+          backendSet.vdmrt = vdmrtBackend;
+          execution.end(true, Date.now());
+        })
+        .catch((err) => {
+          execution.end(false, Date.now());
+          vscode.window.showErrorMessage(err);
+          console.error(err);
+        });
+    } else if (cell.document.languageId === "vdmpp") {
+      await this._execVDM(execution, cell, backendSet.vdmpp)
+        .then((vdmppBackend: Backend) => {
+          backendSet.vdmpp = vdmppBackend;
           execution.end(true, Date.now());
         })
         .catch((err) => {
@@ -151,21 +190,24 @@ export class VDMKernel {
           execution.end(false, Date.now());
           console.error(err);
         });
+    }else{
+      vscode.window.showErrorMessage(`Can't execute '${cell.document.languageId}' yet`)
     }
   }
 
-  private async _execVDMSL(execution: vscode.NotebookCellExecution, cell: vscode.NotebookCell): Promise<void> {
-    if(this.vdmslBackend == undefined){
+  private async _execVDM(execution: vscode.NotebookCellExecution, cell: vscode.NotebookCell, backend: Backend | undefined): Promise<Backend> {
+    if(backend == undefined){
       try{
-        this.vdmslBackend = await Backend.startSession(await getFreePort(), cell);
+        backend = await Backend.startSession(await getFreePort(), cell);
       }catch(e) {
         throw "Could not start vdmsl backend: "+e;
       }
     }else{
-      await this.vdmslBackend.addContent(cell);
+      await backend.addContent(cell);
     }
 
-    this._renderVDMSession(execution, this.vdmslBackend.address);
+    this._renderVDMSession(execution, backend.address);
+    return backend;
   }
 
   private async _execHTML(execution: vscode.NotebookCellExecution, cell: vscode.NotebookCell) {

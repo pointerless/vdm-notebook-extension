@@ -2,10 +2,6 @@ import * as vscode from 'vscode';
 
 export class VDMOutputItem extends vscode.NotebookCellOutputItem {
 
-    /*static singleWebOutput(accessURL: string, displayName: string): vscode.NotebookCellOutputItem{
-        return super.json({accessURL, displayName}, "x-application/vdm-web-output");
-    }*/
-
     static singleWebOutput(address: string): vscode.NotebookCellOutputItem{
         return super.json({address}, "x-application/vdm-web-output");
     }
@@ -32,21 +28,7 @@ export class VDMOutputItem extends vscode.NotebookCellOutputItem {
 
 }
 
-export class VDMOutput extends vscode.NotebookCellOutput {
-
-    /*static fromSessionOutputs(sessionOutputs: SessionOutput[] | undefined): vscode.NotebookCellOutput[]{
-
-        if(sessionOutputs === undefined){
-            throw Error("No session outputs");
-        }
-
-        let output = sessionOutputs[0];
-
-        //let items: vscode.NotebookCellOutputItem[] = [];
-        
-        return [new vscode.NotebookCellOutput([VDMOutputItem.singleWebOutput(output.accessURL, output.displayName)])];
-        
-    }*/
+export class VDMOutput {
 
     static fromAddress(address: string | undefined){
         if(address === undefined){
